@@ -1,21 +1,35 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
+
 const route = useRoute();
+const subscriberOk = ref(false); // Example reactive variable initialization
 
-const Users = await useFetch(`https://api.leandrocesar.com/userOperator/${route.params.id}`);
+const Users = ref(null);
 
-const name = Users.data.value.name
-const nameLast = Users.data.value.lastName
+onMounted(async () => {
+    try {
+        const response = await fetch(`https://api.leandrocesar.com/userOperator/${route.params.id}`);
+        if (response.ok) {
+            Users.value = await response.json();
+        } else {
+            console.error('Failed to fetch user data');
+        }
+    } catch (error) {
+        console.error('Error fetching user data:', error);
+    }
+});
+
 const items = ref([]);
-
 const newItem = ref({
     name: '',
     price: 0,
     quantity: 1,
     paymentMethod: 'Dinheiro',
-    Person: '',
-    obs: '', 
-    paid: false
+    person: '', // Corrected property name to lowercase
+    paid: true,
+    obs: '',
+    
 });
 
 const total = computed(() => {
@@ -34,36 +48,67 @@ function removeItem(item) {
     items.value = items.value.filter(i => i !== item);
 }
 
-onMounted(() => {
-    const storedItems = JSON.parse(localStorage.getItem('items'));
-    if (storedItems) {
-        items.value = storedItems;
-    }
-});
-
-watch(items, (newItems) => {
-    localStorage.setItem('items', JSON.stringify(newItems));
-}, { deep: true });
-
 function addItem() {
-    items.value.push({ ...newItem.value, id: Date.now() });
+    items.value.push({ ...newItem.value, id: Date() });
     newItem.value = {
         name: '',
         price: 0,
         quantity: 1,
         paymentMethod: 'Dinheiro',
-        Person: '',
+        person: '', // Corrected property name to lowercase
+        paid: true,
         obs: '',
-        paid: false
+        total: total.value
     };
 }
+
+async function submitVenda() {
+    try {
+        // Calcular o total antes de enviar
+        const totalValue = items.value.reduce((sum, item) => sum + item.quantity * item.price, 0);
+
+        const response = await fetch(`https://api.leandrocesar.com/operator/${route.params.id}/vendas`, {
+            method: 'post',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                venda: items.value,
+                total: totalValue  // Incluir o total aqui
+            }),
+        });
+
+        localStorage.setItem('items', JSON.stringify(items.value));
+        if (response.ok) {
+            console.log('Data submitted successfully');
+            subscriberOk.value = true;
+            setTimeout(() => {
+                subscriberOk.value = false;
+                // Assuming reloadNuxtApp is defined elsewhere
+                reloadNuxtApp({
+                    path: `/users/${route.params.id}`,
+                    ttl: 1000, // default 10000
+                });
+            }, 1000);
+        } else {
+            console.error('Failed to submit data');
+        }
+    } catch (error) {
+        console.error('Error submitting data:', error);
+    }
+}
+
+
+watch(items, (newItems) => {
+    localStorage.setItem('items', JSON.stringify(newItems));
+}, { deep: true });
 </script>
 
 <template>
     <div>
         <h1>Cashier</h1>
         <div>
-            <h2>{{ name }} {{ nameLast }}</h2>
+            <h2>{{ Users && Users.name }} {{ Users && Users.lastName }}</h2>
         </div>
         <div class="inputs">
             <div>
@@ -86,64 +131,48 @@ function addItem() {
                     <option value="Crédito">Crédito</option>
                 </select>
             </div>
-
-
-
-            <br>
-            <br>
-
         </div>
         <div class="inputs">
             <div>
-                <span>Comprador</span> <input class="inputs" v-model.number="newItem.person" placeholder=""
-                    type="text" />
+                <span>Comprador</span> <input class="inputs" v-model="newItem.person" placeholder="" type="text" />
             </div>
             <div>
-                <span>Observações</span> <textarea class="inputs" v-model.number="newItem.obs" placeholder=""
-                    type="text" />
+                <span>Observações</span> <textarea class="inputs" v-model="newItem.obs" placeholder=""
+                    type="text"></textarea>
             </div>
-
-
-            <br>
-            <br>
-
         </div>
         <div class="inputs">
-            <br>
-            <br>
-
             <button @click="addItem">Add Item</button>
         </div>
-        <h4>
-            <br>
-            <br>
-            Itens do dia:
-        </h4>
-        <div v-for="item in items" :key="item.id">
-            <input v-model.number="item.name" type="text" />
-            <button @click="decreaseQuantity(item)">-</button>
-            <span>{{ item.quantity }}</span>
-            <button @click="increaseQuantity(item)">+</button>
-            <span>Unit Price: {{ item.price }}</span>
-            <input v-model.number="item.price" placeholder="Unit Price" type="number" />
-            <span>Total: {{ item.quantity * item.price }}</span>
-            <select v-model="item.paymentMethod">
-                <option value="Dinheiro">Dinheiro</option>
-                <option value="Pix">Pix</option>
-                <option value="Débito">Débito</option>
-                <option value="Crédito">Crédito</option>
-            </select>
-            <span>Comprador : {{ item.person }} </span>
-            <span>Observações : {{ item.obs }} </span>
-            <label>
-                Paid:
-                <input type="checkbox" v-model="item.paid" />
-            </label>
-            <button @click="removeItem(item)">Delete</button>
-        </div>
-        <div>
-            <h2>Total: {{ total }}</h2>
-        </div>
+        <h4>Itens do dia:</h4>
+        <form @submit.prevent="submitVenda">
+            <div v-for="item in items" :key="item.id">
+                <input v-model="item.name" type="text" />
+                <button @click="decreaseQuantity(item)">-</button>
+                <span>{{ item.quantity }}</span>
+                <button @click="increaseQuantity(item)">+</button>
+                <span>Unit Price: {{ item.price }}</span>
+                <input v-model.number="item.price" placeholder="Unit Price" type="number" />
+                <span>Total: {{ item.quantity * item.price }}</span>
+                <select v-model="item.paymentMethod">
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="Pix">Pix</option>
+                    <option value="Débito">Débito</option>
+                    <option value="Crédito">Crédito</option>
+                </select>
+                <span>Comprador : {{ item.person }} </span>
+                <span>Observações : {{ item.obs }} </span>
+                <label>
+                    Paid:
+                    <input type="checkbox" v-model="item.paid" />
+                </label>
+                <button @click="removeItem(item)">Delete</button>
+            </div>
+            <div>
+                <h2>Total: {{ total }}</h2>
+            </div>
+            <button class="input" type="submit">Submit</button>
+        </form>
     </div>
 </template>
 <style scoped>
